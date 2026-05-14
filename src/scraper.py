@@ -3,7 +3,8 @@ from typing import Dict, List
 from src.utils import http_get, http_post, save_json, create_data_directories
 from src.parsers.sisu_parser import SisuParser
 from src.parsers.chiller_parser import ChillerParser
-from config import SISU_URL, CHILLER_URL, TEAMS_DIR
+from src.comparator import GapAnalyzer
+from config import SISU_URL, CHILLER_URL, TEAMS_DIR, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +16,13 @@ class ScheduleScraper:
             "teams": [],
             "failed_teams": [],
             "chiller_schedule": None,
-            "chiller_failed": False
+            "chiller_failed": False,
+            "gap_analysis": None
         }
 
     def scrape_all(self) -> Dict:
         """
-        Main entry point: scrape Sisu teams and Chiller rink schedule.
+        Main entry point: scrape Sisu teams, Chiller rink schedule, and analyze gaps.
         """
         create_data_directories()
 
@@ -33,6 +35,9 @@ class ScheduleScraper:
 
         # Scrape The Chiller rink schedule
         self._scrape_chiller()
+
+        # Analyze gaps
+        self._analyze_gaps()
 
         logger.info(f"Scraping complete. Teams: {len(self.results['teams'])}, "
                     f"Failed: {len(self.results['failed_teams'])}")
@@ -125,6 +130,23 @@ class ScheduleScraper:
             logger.error(f"Error processing Chiller schedule: {e}")
             self.results["chiller_failed"] = True
 
+    def _analyze_gaps(self) -> None:
+        """
+        Analyze gaps between team schedules and rink schedule.
+        """
+        logger.info("Analyzing gaps between team and rink schedules...")
+
+        try:
+            analyzer = GapAnalyzer(DATA_DIR)
+            gap_report = analyzer.analyze()
+
+            # Save gap report
+            save_json("gap_analysis.json", gap_report)
+            self.results["gap_analysis"] = gap_report
+            logger.info("Gap analysis complete and saved")
+        except Exception as e:
+            logger.error(f"Error during gap analysis: {e}")
+
     @staticmethod
     def _sanitize_filename(team_name: str) -> str:
         """Convert team name to safe filename."""
@@ -150,4 +172,14 @@ class ScheduleScraper:
             print(f"\n✓ Rink schedule downloaded successfully")
         elif self.results['chiller_failed']:
             print(f"\n✗ Failed to download rink schedule")
+
+        # Print gap analysis summary
+        if self.results['gap_analysis']:
+            gap_report = self.results['gap_analysis']
+            summary = gap_report['summary']
+            print(f"\n✓ Gap analysis complete")
+            print(f"  Total team events: {summary['total_team_events']}")
+            print(f"  Events at Chiller rinks: {summary['events_at_chiller_rinks']}")
+            print(f"  Events not in rink schedule: {summary['events_not_in_rink_schedule']}")
+            print(f"  Coverage: {summary['coverage_percentage']}%")
         print("="*60 + "\n")
