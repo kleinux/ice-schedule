@@ -40,7 +40,7 @@ class ScheduleScraper:
 
     def _scrape_sisu_teams(self) -> None:
         """
-        Fetch Sisu homepage, find team links, and scrape each team's schedule.
+        Fetch Sisu homepage, find team links from Teams menu, and scrape each team's calendar.
         """
         logger.info("Fetching Sisu Thunderbirds homepage...")
         homepage_html = http_get(SISU_URL)
@@ -49,39 +49,39 @@ class ScheduleScraper:
             logger.error("Failed to fetch Sisu homepage")
             return
 
-        logger.info("Parsing team links from homepage...")
+        logger.info("Parsing team links from Teams menu...")
         teams = self.sisu_parser.fetch_teams(homepage_html)
 
         if not teams:
-            logger.error("No teams found on Sisu homepage")
+            logger.error("No teams found in Teams menu")
             return
 
         logger.info(f"Found {len(teams)} teams to scrape")
 
-        for team_name, team_url in teams:
-            self._scrape_team(team_name, team_url)
+        for team_name, calendar_url in teams:
+            self._scrape_team_calendar(team_name, calendar_url)
 
-    def _scrape_team(self, team_name: str, team_url: str) -> None:
+    def _scrape_team_calendar(self, team_name: str, calendar_url: str) -> None:
         """
-        Scrape schedule for a single team.
+        Scrape a team's calendar page.
         """
-        logger.info(f"Scraping {team_name} from {team_url}...")
+        logger.info(f"Scraping {team_name} calendar from {calendar_url}...")
 
-        team_html = http_get(team_url)
-        if not team_html:
-            logger.error(f"Failed to fetch schedule for {team_name}")
+        calendar_html = http_get(calendar_url)
+        if not calendar_html:
+            logger.error(f"Failed to fetch calendar for {team_name}")
             self.results["failed_teams"].append(team_name)
             return
 
-        # Parse the schedule
-        schedule = self.sisu_parser.parse_schedule(team_html, team_name)
+        # Parse the calendar
+        events = self.sisu_parser.parse_calendar(calendar_html, team_name)
 
         # Create team data structure
         team_data = {
             "team_name": team_name,
-            "team_url": team_url,
-            "schedule": schedule,
-            "game_count": len(schedule)
+            "calendar_url": calendar_url,
+            "events": events,
+            "event_count": len(events)
         }
 
         # Save to JSON file
@@ -89,9 +89,9 @@ class ScheduleScraper:
         try:
             save_json(filename, team_data, TEAMS_DIR)
             self.results["teams"].append(team_name)
-            logger.info(f"Successfully saved {team_name} schedule ({len(schedule)} games)")
+            logger.info(f"Successfully saved {team_name} calendar ({len(events)} events)")
         except Exception as e:
-            logger.error(f"Error saving {team_name} schedule: {e}")
+            logger.error(f"Error saving {team_name} calendar: {e}")
             self.results["failed_teams"].append(team_name)
 
     def _scrape_chiller(self) -> None:

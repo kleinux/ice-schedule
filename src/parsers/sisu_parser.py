@@ -11,145 +11,155 @@ logger = logging.getLogger(__name__)
 class SisuParser:
     def __init__(self, base_url: str):
         self.base_url = base_url
-        self.session = None
+        self.current_year = datetime.now().year
 
     def fetch_teams(self, html: str) -> List[Tuple[str, str]]:
         """
-        Parse homepage to find all team links.
-        Returns list of (team_name, team_url) tuples.
+        Parse homepage to find team links from the Teams dropdown menu.
+        Returns list of (team_name, team_calendar_url) tuples.
         """
         soup = BeautifulSoup(html, 'html.parser')
         teams = []
 
-        # Strategy: Look for common patterns in sports websites
-        # Try to find links containing "schedule" or team names
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            text = link.get_text(strip=True)
+        # Look for "Teams" link and its dropdown menu
+        for link in soup.find_all('a', string=lambda x: x and 'Teams' in x):
+            # Find the parent element that contains the dropdown
+            parent = link.find_parent(['li', 'div'])
+            if parent:
+                # Look for dropdown menu
+                dropdown = parent.find('ul', class_='dropdown-menu')
+                if dropdown:
+                    # Find all team links in the dropdown
+                    for team_link in dropdown.find_all('a', href=True):
+                        team_url = team_link.get('href', '')
+                        team_name = team_link.get_text(strip=True)
 
-            # Look for schedule links
-            if 'schedule' in href.lower() and text and len(text) > 0:
-                full_url = urljoin(self.base_url, href)
-                # Avoid duplicates
-                if not any(url == full_url for _, url in teams):
-                    teams.append((text, full_url))
-                    logger.debug(f"Found team: {text} -> {full_url}")
+                        # Team links should be in format /team/{id}
+                        if '/team/' in team_url:
+                            # Convert to calendar URL
+                            calendar_url = urljoin(self.base_url, f"{team_url}/calendar")
+                            teams.append((team_name, calendar_url))
+                            logger.debug(f"Found team: {team_name} -> {calendar_url}")
 
-        if not teams:
-            logger.warning("No team links found with standard patterns")
-            # Try alternative: look for any links that might be teams
-            for link in soup.find_all('a', href=True):
-                href = link.get('href', '')
-                text = link.get_text(strip=True)
-                if href and text and len(text) > 2 and len(text) < 50:
-                    full_url = urljoin(self.base_url, href)
-                    if 'team' in full_url.lower() or any(c.isupper() for c in text):
-                        if not any(url == full_url for _, url in teams):
-                            teams.append((text, full_url))
+        if teams:
+            logger.info(f"Found {len(teams)} teams from Teams menu")
+        else:
+            logger.warning("No teams found in Teams dropdown menu")
 
-        logger.info(f"Found {len(teams)} potential teams")
         return teams
 
-    def parse_schedule(self, html: str, team_name: str) -> List[Dict]:
+    def parse_calendar(self, html: str, team_name: str) -> List[Dict]:
         """
-        Parse a team schedule page and extract games.
-        Returns list of game dictionaries.
+        Parse a team's calendar page and extract all events.
+        Returns list of event dictionaries.
         """
         soup = BeautifulSoup(html, 'html.parser')
-        schedule = []
+        events = []
 
-        # Look for table rows or game containers
-        rows = soup.find_all('tr')
-        if not rows:
-            rows = soup.find_all('div', class_=re.compile(r'game|match|event', re.I))
+        # Find all calendar events
+        for event_div in soup.find_all('div', class_='calendar_event'):
+            event = self._parse_event(event_div)
+            if event:
+                events.append(event)
+                logger.debug(f"Parsed event: {event}")
 
-        for row in rows:
-            game = self._parse_game_row(row, team_name)
-            if game:
-                schedule.append(game)
-                logger.debug(f"Parsed game: {game}")
+        logger.info(f"Found {len(events)} events for {team_name}")
+        return events
 
-        logger.info(f"Found {len(schedule)} games for {team_name}")
-        return schedule
+    def _parse_event(self, event_div) -> Optional[Dict]:
+        """Extract event details from a calendar_event div."""
+        # Get event type (game, practice, meeting, etc.)
+        event_type_span = event_div.find('span', class_='calendar_event_type')
+        event_type = event_type_span.get_text(strip=True).split()[0] if event_type_span else None
 
-    def _parse_game_row(self, row, team_name: str) -> Optional[Dict]:
-        """Extract game details from a row or element."""
-        cells = row.find_all(['td', 'div'])
-        if len(cells) < 3:
-            return None
+        # Get time
+        time_span = event_div.find('span', class_='calendar_event_time')
+        time = time_span.get_text(strip=True) if time_span else None
 
-        text_content = ' '.join([cell.get_text(strip=True) for cell in cells])
+        # Get opponent/activity
+        opponent_span = event_div.find('span', class_='calendar_event_opponent')
+        opponent = opponent_span.get_text(strip=True) if opponent_span else None
 
-        # Check if this looks like a game row (contains date/time indicators)
-        if not any(indicator in text_content for indicator in
-                   ['AM', 'PM', 'am', 'pm', ':', 'vs', 'vs.', '@', 'game', 'match']):
-            return None
+        # Get location
+        location_span = event_div.find('span', class_='calendar_event_location')
+        location = location_span.get_text(strip=True) if location_span else None
 
-        game = {
-            "date": None,
-            "time": None,
-            "opponent": None,
-            "location": None,
-            "game_type": None,
-            "status": None
+        # Get duration
+        duration_span = event_div.find('span', class_='calendar_event_duration')
+        duration = duration_span.get_text(strip=True) if duration_span else None
+
+        # Find the date from the mobile_event div (contains full date like "MAY14")
+        date_str = None
+        mobile_event = event_div.find_parent('div', class_='mobile_event')
+        if mobile_event:
+            text = mobile_event.get_text(strip=True)
+            # Extract date from format like "MAY14" or "JUN1" at the beginning
+            month_match = re.match(r'(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{1,2})', text)
+            if month_match:
+                month_str = month_match.group(1)
+                day_str = month_match.group(2)
+                date_str = f"{month_str}{day_str}"
+
+        event = {
+            "date": self._parse_calendar_date(date_str) if date_str else None,
+            "time": time,
+            "event_type": event_type,
+            "opponent": opponent,
+            "location": location,
+            "duration": duration
         }
 
-        # Try to extract date
-        date_match = re.search(r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', text_content)
-        if date_match:
-            try:
-                date_str = date_match.group(1)
-                game["date"] = self._normalize_date(date_str)
-            except:
-                pass
-
-        # Try to extract time
-        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?', text_content)
-        if time_match:
-            hour = time_match.group(1)
-            minute = time_match.group(2)
-            ampm = time_match.group(3)
-            if ampm and ampm.upper() == 'PM' and int(hour) != 12:
-                hour = str(int(hour) + 12)
-            elif ampm and ampm.upper() == 'AM' and int(hour) == 12:
-                hour = '00'
-            game["time"] = f"{hour.zfill(2)}:{minute}"
-
-        # Determine game type (Home/Away)
-        if '@' in text_content or 'at ' in text_content.lower():
-            game["game_type"] = "Away"
-        else:
-            game["game_type"] = "Home"
-
-        # Extract opponent and location
-        opponent_match = re.search(r'(?:vs\.?|@)\s*(.+?)(?:\s+at\s+|\s+$|$)', text_content, re.I)
-        if opponent_match:
-            game["opponent"] = opponent_match.group(1).strip()
-
-        location_match = re.search(r'at\s+(.+?)(?:\s+$|$)', text_content, re.I)
-        if location_match:
-            game["location"] = location_match.group(1).strip()
-
-        # Check for result status
-        if 'final' in text_content.lower() or 'completed' in text_content.lower():
-            game["status"] = "Final"
-        elif 'scheduled' in text_content.lower() or 'upcoming' in text_content.lower():
-            game["status"] = "Scheduled"
-
-        # Only return if we have at least a date
-        if game["date"]:
-            return game
+        # Only include if we have at least a type and date
+        if event["event_type"] and event["date"]:
+            return event
 
         return None
 
-    def _normalize_date(self, date_str: str) -> str:
-        """Convert various date formats to ISO 8601 (YYYY-MM-DD)."""
-        formats = ['%m/%d/%Y', '%m-%d-%Y', '%m/%d/%y', '%m-%d-%y', '%d/%m/%Y', '%d-%m-%Y']
-        for fmt in formats:
+    def _parse_calendar_date(self, date_str: str) -> Optional[str]:
+        """Convert calendar date to ISO 8601 format."""
+        if not date_str:
+            return None
+
+        # Handle month abbreviation + day (e.g., "MAY14", "JUN1")
+        date_str = date_str.strip()
+
+        # Try month name + day pattern
+        month_map = {
+            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+        }
+
+        # Extract month and day
+        match = re.match(r'([A-Z]{3})(\d{1,2})', date_str, re.IGNORECASE)
+        if match:
+            month_str = match.group(1).upper()
+            day = int(match.group(2))
+
+            if month_str in month_map:
+                month = month_map[month_str]
+                # Determine year - assume current year or next year if month is earlier
+                month_num = month
+                current_month = datetime.now().month
+                year = self.current_year
+
+                # If the month is earlier than current month, it might be next year
+                if month_num < current_month:
+                    year += 1
+
+                try:
+                    date_obj = datetime(year, month, day)
+                    return date_obj.strftime('%Y-%m-%d')
+                except ValueError:
+                    logger.warning(f"Invalid date: {month_str} {day}")
+                    return None
+
+        # Try numeric formats
+        for fmt in ['%m/%d/%Y', '%m-%d-%Y', '%m/%d/%y', '%m-%d-%y']:
             try:
                 parsed = datetime.strptime(date_str, fmt)
                 return parsed.strftime('%Y-%m-%d')
             except ValueError:
                 continue
-        logger.warning(f"Could not parse date: {date_str}")
-        return date_str
+
+        logger.warning(f"Could not parse calendar date: {date_str}")
+        return None
