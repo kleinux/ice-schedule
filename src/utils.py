@@ -4,7 +4,7 @@ import os
 import time
 import requests
 from typing import Any, Dict, List, Optional
-from config import DATA_DIR, TEAMS_DIR, LOG_LEVEL, MAX_RETRIES, RETRY_BACKOFF
+from config import DATA_DIR, LOG_LEVEL, MAX_RETRIES, RETRY_BACKOFF
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -13,11 +13,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_data_directories() -> None:
-    """Ensure data directories exist."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(TEAMS_DIR, exist_ok=True)
-    logger.info(f"Data directories ready: {DATA_DIR}")
+def create_data_directories(data_dir: str = None) -> str:
+    """Ensure data directories exist. Returns the data directory path."""
+    if data_dir is None:
+        data_dir = DATA_DIR
+
+    teams_dir = os.path.join(data_dir, "teams")
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(teams_dir, exist_ok=True)
+    logger.info(f"Data directories ready: {data_dir}")
+    return data_dir
 
 
 def save_json(filename: str, data: Any, directory: str = DATA_DIR) -> None:

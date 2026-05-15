@@ -4,7 +4,7 @@ from src.utils import http_get, http_post, save_json, create_data_directories
 from src.parsers.sisu_parser import SisuParser
 from src.parsers.chiller_parser import ChillerParser
 from src.comparator import GapAnalyzer
-from config import SISU_URL, CHILLER_URL, CHILLER_BODY, TEAMS_DIR, DATA_DIR
+from config import SISU_URL, CHILLER_URL, get_dated_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class ScheduleScraper:
     def __init__(self):
         self.sisu_parser = SisuParser(SISU_URL)
+        self.data_dir = None
+        self.teams_dir = None
         self.results = {
             "teams": [],
             "failed_teams": [],
@@ -24,11 +26,15 @@ class ScheduleScraper:
         """
         Main entry point: scrape Sisu teams, Chiller rink schedule, and analyze gaps.
         """
-        create_data_directories()
+        # Initialize dated data directories
+        self.data_dir = get_dated_data_dir()
+        create_data_directories(self.data_dir)
+        self.teams_dir = self.data_dir + "/teams"
 
         logger.info("Starting schedule scrape...")
         logger.info(f"Sisu URL: {SISU_URL}")
         logger.info(f"Chiller URL: {CHILLER_URL}")
+        logger.info(f"Data directory: {self.data_dir}")
 
         # Scrape Sisu Thunderbirds
         self._scrape_sisu_teams()
@@ -92,7 +98,7 @@ class ScheduleScraper:
         # Save to JSON file
         filename = self._sanitize_filename(team_name) + ".json"
         try:
-            save_json(filename, team_data, TEAMS_DIR)
+            save_json(filename, team_data, self.teams_dir)
             self.results["teams"].append(team_name)
             logger.info(f"Successfully saved {team_name} calendar ({len(events)} events)")
         except Exception as e:
@@ -105,7 +111,7 @@ class ScheduleScraper:
         """
         logger.info("Fetching Chiller rink schedule...")
 
-        response = http_post(CHILLER_URL, data=CHILLER_BODY, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        response = http_post(CHILLER_URL)
         if not response:
             logger.error("Failed to fetch Chiller rink schedule")
             self.results["chiller_failed"] = True
@@ -123,7 +129,7 @@ class ScheduleScraper:
             normalized = ChillerParser.normalize_schedule(schedule_data)
 
             # Save to JSON file
-            save_json("rink_schedule.json", normalized)
+            save_json("rink_schedule.json", normalized, self.data_dir)
             self.results["chiller_schedule"] = normalized
             logger.info(f"Successfully saved Chiller rink schedule")
         except Exception as e:
@@ -137,11 +143,11 @@ class ScheduleScraper:
         logger.info("Analyzing gaps between team and rink schedules...")
 
         try:
-            analyzer = GapAnalyzer(DATA_DIR)
+            analyzer = GapAnalyzer(self.data_dir)
             gap_report = analyzer.analyze()
 
             # Save gap report
-            save_json("gap_analysis.json", gap_report)
+            save_json("gap_analysis.json", gap_report, self.data_dir)
             self.results["gap_analysis"] = gap_report
             logger.info("Gap analysis complete and saved")
         except Exception as e:
@@ -161,7 +167,8 @@ class ScheduleScraper:
         print("\n" + "="*60)
         print("SCHEDULE SCRAPING SUMMARY")
         print("="*60)
-        print(f"Successfully scraped: {len(self.results['teams'])} teams")
+        print(f"Data saved to: {self.data_dir}")
+        print(f"\nSuccessfully scraped: {len(self.results['teams'])} teams")
         for team in self.results['teams']:
             print(f"  ✓ {team}")
         if self.results['failed_teams']:
