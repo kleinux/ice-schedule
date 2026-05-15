@@ -4,7 +4,7 @@ from src.utils import http_get, http_post, save_json, create_data_directories
 from src.parsers.sisu_parser import SisuParser
 from src.parsers.chiller_parser import ChillerParser
 from src.comparator import GapAnalyzer
-from config import SISU_URL, CHILLER_URL, TEAMS_DIR, DATA_DIR
+from config import SISU_URL, CHILLER_URL, CHILLER_BODY, TEAMS_DIR, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class ScheduleScraper:
         """
         logger.info("Fetching Chiller rink schedule...")
 
-        response = http_post(CHILLER_URL)
+        response = http_post(CHILLER_URL, data=CHILLER_BODY, headers={"Content-Type": "application/x-www-form-urlencoded"})
         if not response:
             logger.error("Failed to fetch Chiller rink schedule")
             self.results["chiller_failed"] = True

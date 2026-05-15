@@ -65,13 +65,15 @@ def http_get(url: str, timeout: int = 10, headers: Optional[Dict] = None) -> Opt
 
 def http_post(url: str, data: Dict = None, timeout: int = 10, headers: Optional[Dict] = None) -> Optional[str]:
     """Make a POST request with retry logic."""
-    headers = headers or {
+    request_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
+    if headers:
+        request_headers.update(headers)
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.post(url, data=data, timeout=timeout, headers=headers)
+            response = requests.post(url, data=data, timeout=timeout, headers=request_headers)
             response.raise_for_status()
             return response.text
         except requests.RequestException as e:
